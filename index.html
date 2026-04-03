@@ -25,7 +25,7 @@
   --glass-border: rgba(255,255,255,0.06);
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; overflow-x: hidden; }
 body {
   font-family: 'Inter', sans-serif;
   background: var(--bg-primary);
@@ -509,8 +509,8 @@ tr.highlight-row td:first-child { border-left: 3px solid var(--accent-teal); }
 
 /* ====== ASK ANYTHING CHAT ====== */
 .chat-fab {
-  position: fixed; bottom: 28px; right: 28px; z-index: 9999;
-  width: 60px; height: 60px; border-radius: 50%;
+  position: fixed; bottom: 20px; right: 16px; z-index: 9999;
+  width: 56px; height: 56px; border-radius: 50%;
   background: linear-gradient(135deg, var(--accent-teal), #0891b2);
   border: none; cursor: pointer; display: flex; align-items: center; justify-content: center;
   box-shadow: 0 4px 20px rgba(0,212,170,0.4);
@@ -606,7 +606,9 @@ tr.highlight-row td:first-child { border-left: 3px solid var(--accent-teal); }
 .chat-key-prompt button:hover { background: #00b894; }
 
 @media (max-width: 500px) {
-  .chat-panel { width: calc(100vw - 24px); right: 12px; bottom: 90px; height: 60vh; }
+  .chat-fab { bottom: 16px; right: 12px; width: 52px; height: 52px; }
+  .chat-fab svg { width: 24px; height: 24px; }
+  .chat-panel { width: calc(100vw - 24px); right: 12px; bottom: 80px; height: 60vh; }
 }
 </style>
 </head>
