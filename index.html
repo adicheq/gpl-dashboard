@@ -1562,6 +1562,313 @@ function initDashboard() {
     "What was the most exciting match?"
   ];
 
+  // ====== CHAT TREE (Guided Navigation) ======
+  var treeMode = true; // start in tree mode
+
+  function getTeamNames() { return Object.keys(DATA.teams).sort(); }
+  function getMatchesByRound(round) { return DATA.matches.filter(function(m){ return m.round === round; }); }
+  function getMatchLabel(m) { return m.teamA.name + ' ' + m.teamA.score + ' vs ' + m.teamB.name + ' ' + m.teamB.score; }
+  function getPlayersByTeam(teamName) {
+    return DATA.battingStats.filter(function(b){ return b.team === teamName; }).map(function(b){ return b.name; });
+  }
+
+  function renderTree(options, title) {
+    var html = '';
+    if (title) html += '<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;padding:0 4px">' + title + '</div>';
+    html += options.map(function(opt) {
+      var icon = opt.icon || '';
+      var label = opt.label;
+      return '<div class="chat-chip tree-chip" data-action="' + (opt.action || '') + '" data-value="' + (opt.value || '').replace(/"/g, '&quot;') + '">' + (icon ? icon + ' ' : '') + label + '</div>';
+    }).join('');
+    // Always add a "Ask AI freely" option at the bottom
+    html += '<div class="chat-chip tree-chip" data-action="freemode" style="border-color:var(--accent-gold);color:var(--accent-gold)">💬 Ask AI freely</div>';
+    suggestions.style.display = 'flex';
+    suggestions.innerHTML = html;
+    suggestions.querySelectorAll('.tree-chip').forEach(function(chip) {
+      chip.addEventListener('click', function() { handleTreeAction(chip.dataset.action, chip.dataset.value, chip.textContent); });
+    });
+  }
+
+  function showRootTree() {
+    treeMode = true;
+    renderTree([
+      { icon: '🏏', label: 'Browse a Match', action: 'pickRound' },
+      { icon: '👥', label: 'Explore a Team', action: 'pickTeam' },
+      { icon: '🏆', label: 'Tournament Records', action: 'showRecords' },
+      { icon: '⭐', label: 'MVP Rankings', action: 'showMVP' },
+      { icon: '🏅', label: 'Player Lookup', action: 'pickPlayerTeam' },
+      { icon: '📊', label: 'Leaderboards', action: 'leaderboards' },
+    ], 'What would you like to explore?');
+  }
+
+  function handleTreeAction(action, value, label) {
+    if (action === 'freemode') {
+      treeMode = false;
+      suggestions.style.display = 'none';
+      addMessage('system', 'Free mode — type any question below!');
+      input.focus();
+      return;
+    }
+
+    if (action === 'pickRound') {
+      addMessage('user', '🏏 Browse a Match');
+      renderTree([
+        { icon: '🏟️', label: 'League Matches', action: 'listMatches', value: 'League Matches' },
+        { icon: '⚔️', label: 'Quarter Finals', action: 'listMatches', value: 'Quarter Final' },
+        { icon: '🔥', label: 'Semi Finals', action: 'listMatches', value: 'Semi Final' },
+        { icon: '🥉', label: 'Third Place', action: 'listMatches', value: 'Third Position' },
+        { icon: '🏆', label: 'Final', action: 'listMatches', value: 'Final' },
+        { icon: '⬅️', label: 'Back', action: 'root' },
+      ], 'Pick a stage:');
+      return;
+    }
+
+    if (action === 'listMatches') {
+      addMessage('user', label);
+      var matches = getMatchesByRound(value);
+      var opts = matches.map(function(m) {
+        var short = m.teamA.name.split(' ')[0] + ' ' + m.teamA.score + ' vs ' + m.teamB.name.split(' ')[0] + ' ' + m.teamB.score;
+        return { label: short, action: 'matchDetail', value: m.id.toString() };
+      });
+      opts.push({ icon: '⬅️', label: 'Back', action: 'pickRound' });
+      renderTree(opts, value + ' (' + matches.length + ' matches):');
+      return;
+    }
+
+    if (action === 'matchDetail') {
+      var match = DATA.matches.find(function(m) { return m.id.toString() === value; });
+      if (!match) return;
+      addMessage('user', getMatchLabel(match));
+      // Show match info directly
+      var info = '<strong>' + match.teamA.name + ' ' + match.teamA.score + ' (' + match.teamA.overs + ' ov)</strong>\nvs\n<strong>' + match.teamB.name + ' ' + match.teamB.score + ' (' + match.teamB.overs + ' ov)</strong>\n\n';
+      info += '🏆 <strong>' + match.winner + '</strong> won by ' + match.winBy + '\n';
+      info += '📅 ' + match.date.substring(0,10) + ' • ' + match.round + '\n';
+      if (match.playerOfMatch) info += '⭐ POM: <strong>' + match.playerOfMatch.name + '</strong> (' + match.playerOfMatch.team + ')';
+      addMessage('ai', info);
+      renderTree([
+        { icon: '🔍', label: 'Deep dive this match', action: 'askAboutMatch', value: match.teamA.name + ' vs ' + match.teamB.name + ' (' + match.round + ')' },
+        { icon: '🏏', label: 'Another match', action: 'pickRound' },
+        { icon: '🏠', label: 'Main menu', action: 'root' },
+      ]);
+      return;
+    }
+
+    if (action === 'askAboutMatch') {
+      treeMode = false;
+      suggestions.style.display = 'none';
+      sendMessage('Give me a detailed analysis of the match: ' + value + '. Key performances, turning points, and standout moments.');
+      return;
+    }
+
+    if (action === 'pickTeam') {
+      addMessage('user', '👥 Explore a Team');
+      var teams = getTeamNames();
+      var opts = teams.map(function(t) {
+        var d = DATA.teams[t];
+        return { label: t + ' (' + d.won + 'W/' + d.lost + 'L)', action: 'teamDetail', value: t };
+      });
+      opts.push({ icon: '⬅️', label: 'Back', action: 'root' });
+      renderTree(opts, 'Pick a team:');
+      return;
+    }
+
+    if (action === 'teamDetail') {
+      var t = DATA.teams[value];
+      if (!t) return;
+      addMessage('user', '👥 ' + value);
+      var info = '<strong>' + value + '</strong>\n\n';
+      info += '📊 P: ' + t.played + ' | W: ' + t.won + ' | L: ' + t.lost + '\n';
+      info += '🏏 Runs: ' + t.runsScored + ' scored, ' + t.runsConceded + ' conceded\n';
+      info += '🎯 Wickets taken: ' + t.wicketsTaken + '\n';
+      info += '📈 Highest: ' + t.highestScore + ' | Lowest: ' + t.lowestScore + '\n';
+      info += '💥 Sixes: ' + t.mostSixes + '\n';
+      info += '📋 Form: ' + t.results.join(' ');
+      addMessage('ai', info);
+      renderTree([
+        { icon: '🔍', label: 'Strengths & weaknesses', action: 'askAboutTeam', value: value + ' strengths and weaknesses' },
+        { icon: '🏏', label: 'Best players', action: 'askAboutTeam', value: 'Who were the top performers for ' + value + '?' },
+        { icon: '👥', label: 'Another team', action: 'pickTeam' },
+        { icon: '🏠', label: 'Main menu', action: 'root' },
+      ]);
+      return;
+    }
+
+    if (action === 'askAboutTeam') {
+      treeMode = false;
+      suggestions.style.display = 'none';
+      sendMessage(value);
+      return;
+    }
+
+    if (action === 'showRecords') {
+      addMessage('user', '🏆 Tournament Records');
+      var r = DATA.records;
+      var info = '🏏 <strong>Highest Score:</strong> ' + r.highestIndividualScore.name + ' ' + r.highestIndividualScore.runs + '(' + r.highestIndividualScore.balls + ') vs ' + r.highestIndividualScore.vs + '\n';
+      info += '🎯 <strong>Best Bowling:</strong> ' + r.bestBowling.name + ' ' + r.bestBowling.wickets + '/' + r.bestBowling.runs + ' vs ' + r.bestBowling.vs + '\n';
+      info += '💥 <strong>Most 6s (match):</strong> ' + r.mostSixesMatch.name + ' — ' + r.mostSixesMatch.sixes + ' sixes vs ' + r.mostSixesMatch.vs + '\n';
+      info += '💥 <strong>Most 6s (tournament):</strong> ' + r.mostSixesTournament.name + ' — ' + r.mostSixesTournament.sixes + ' sixes\n';
+      info += '🏆 <strong>Biggest Win:</strong> ' + r.biggestVictory.winner + ' bt ' + r.biggestVictory.loser + ' by ' + r.biggestVictory.margin + '\n';
+      info += '😰 <strong>Closest Match:</strong> ' + r.closestMatch.winner + ' bt ' + r.closestMatch.loser + ' by ' + r.closestMatch.margin + '\n';
+      info += '📈 <strong>Highest Team:</strong> ' + r.highestTeamScore.team + ' ' + r.highestTeamScore.score + '\n';
+      info += '📉 <strong>Lowest Team:</strong> ' + r.lowestTeamScore.team + ' ' + r.lowestTeamScore.score;
+      addMessage('ai', info);
+      renderTree([
+        { icon: '🏠', label: 'Main menu', action: 'root' },
+      ]);
+      return;
+    }
+
+    if (action === 'showMVP') {
+      addMessage('user', '⭐ MVP Rankings');
+      var mvp = DATA.mvpScores.slice().sort(function(a,b){return b.overallMvp - a.overallMvp;});
+      var info = '<strong>Top 10 MVP Rankings</strong>\n(Runs + Wickets×25 + Catches×10)\n\n';
+      mvp.slice(0,10).forEach(function(m, i) {
+        var medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i+1) + '.';
+        info += medal + ' <strong>' + m.name.replace(/ +\(c\)/, '') + '</strong> (' + m.team.split(' ')[0] + ') — ' + m.overallMvp + ' pts\n';
+        info += '   ' + m.runs + 'r | ' + m.wickets + 'w | ' + m.catches + 'c\n';
+      });
+      addMessage('ai', info);
+      renderTree([
+        { icon: '🏅', label: 'League MVP', action: 'showLeagueMVP' },
+        { icon: '🔥', label: 'Knockout MVP', action: 'showKnockoutMVP' },
+        { icon: '🏠', label: 'Main menu', action: 'root' },
+      ]);
+      return;
+    }
+
+    if (action === 'showLeagueMVP' || action === 'showKnockoutMVP') {
+      var key = action === 'showLeagueMVP' ? 'leagueMvp' : 'knockoutMvp';
+      var title2 = action === 'showLeagueMVP' ? 'League Stage' : 'Knockout Stage';
+      addMessage('user', '🏅 ' + title2 + ' MVP');
+      var mvp = DATA.mvpScores.slice().sort(function(a,b){return b[key] - a[key];});
+      var info = '<strong>Top 10 ' + title2 + ' MVP</strong>\n\n';
+      mvp.slice(0,10).forEach(function(m, i) {
+        if (m[key] === 0) return;
+        info += (i+1) + '. <strong>' + m.name.replace(/ +\(c\)/, '') + '</strong> — ' + m[key] + ' pts (' + m.runs + 'r, ' + m.wickets + 'w)\n';
+      });
+      addMessage('ai', info);
+      renderTree([{ icon: '🏠', label: 'Main menu', action: 'root' }]);
+      return;
+    }
+
+    if (action === 'pickPlayerTeam') {
+      addMessage('user', '🏅 Player Lookup');
+      var teams = getTeamNames();
+      var opts = teams.map(function(t) {
+        return { label: t.split(' - ')[0] || t.split(' ')[0], action: 'pickPlayer', value: t };
+      });
+      opts.push({ icon: '⬅️', label: 'Back', action: 'root' });
+      renderTree(opts, 'Pick a team first:');
+      return;
+    }
+
+    if (action === 'pickPlayer') {
+      addMessage('user', value.split(' - ')[0] || value);
+      var batters = DATA.battingStats.filter(function(b){ return b.team === value; });
+      var bowlers = DATA.bowlingStats.filter(function(b){ return b.team === value; });
+      var allPlayers = {};
+      batters.forEach(function(b){ allPlayers[b.name] = b; });
+      var opts = Object.keys(allPlayers).map(function(name) {
+        var b = allPlayers[name];
+        return { label: name.replace(/ +\(c\)/, '') + ' (' + b.runs + 'r)', action: 'playerDetail', value: name + '|||' + value };
+      });
+      opts.push({ icon: '⬅️', label: 'Back', action: 'pickPlayerTeam' });
+      renderTree(opts, 'Pick a player:');
+      return;
+    }
+
+    if (action === 'playerDetail') {
+      var parts = value.split('|||');
+      var pName = parts[0], pTeam = parts[1];
+      var bat = DATA.battingStats.find(function(b){ return b.name === pName; });
+      var bowl = DATA.bowlingStats.find(function(b){ return b.name === pName; });
+      var mvpEntry = DATA.mvpScores.find(function(m){ return m.name === pName; });
+      addMessage('user', '🏅 ' + pName.replace(/ +\(c\)/, ''));
+      var info = '<strong>' + pName.replace(/ +\(c\)/, '') + '</strong> (' + pTeam + ')\n\n';
+      if (bat) {
+        info += '🏏 <strong>Batting:</strong> ' + bat.runs + ' runs (' + bat.innings + ' inn)\n';
+        info += '   Avg: ' + bat.avg + ' | SR: ' + bat.sr + ' | HS: ' + bat.highScore + '\n';
+        info += '   4s: ' + bat.fours + ' | 6s: ' + bat.sixes + '\n';
+      }
+      if (bowl && bowl.wickets > 0) {
+        info += '🎯 <strong>Bowling:</strong> ' + bowl.wickets + ' wickets (' + bowl.overs + ' ov)\n';
+        info += '   Eco: ' + bowl.economy + ' | Avg: ' + bowl.avg + ' | BBI: ' + bowl.bestFigures + '\n';
+      }
+      if (mvpEntry) {
+        info += '⭐ <strong>MVP Score:</strong> ' + mvpEntry.overallMvp + ' pts';
+      }
+      addMessage('ai', info);
+      renderTree([
+        { icon: '🔍', label: 'Match-by-match breakdown', action: 'askAboutTeam', value: 'Give me a match-by-match breakdown of ' + pName + ' performance in GPL 2026' },
+        { icon: '👥', label: 'Another player', action: 'pickPlayer', value: pTeam },
+        { icon: '🏠', label: 'Main menu', action: 'root' },
+      ]);
+      return;
+    }
+
+    if (action === 'leaderboards') {
+      addMessage('user', '📊 Leaderboards');
+      renderTree([
+        { icon: '🏏', label: 'Top Run Scorers', action: 'showBatLeaderboard' },
+        { icon: '🎯', label: 'Top Wicket Takers', action: 'showBowlLeaderboard' },
+        { icon: '💥', label: 'Most Sixes', action: 'showSixesLeaderboard' },
+        { icon: '🏅', label: 'Most POM Awards', action: 'showPOMLeaderboard' },
+        { icon: '⬅️', label: 'Back', action: 'root' },
+      ], 'Pick a leaderboard:');
+      return;
+    }
+
+    if (action === 'showBatLeaderboard') {
+      addMessage('user', '🏏 Top Run Scorers');
+      var info = '<strong>Top 10 Run Scorers</strong>\n\n';
+      DATA.battingStats.slice(0,10).forEach(function(b, i) {
+        info += (i+1) + '. <strong>' + b.name.replace(/ +\(c\)/, '') + '</strong> — ' + b.runs + ' runs (SR ' + b.sr + ', HS ' + b.highScore + ')\n';
+      });
+      addMessage('ai', info);
+      renderTree([{ icon: '📊', label: 'More leaderboards', action: 'leaderboards' }, { icon: '🏠', label: 'Main menu', action: 'root' }]);
+      return;
+    }
+
+    if (action === 'showBowlLeaderboard') {
+      addMessage('user', '🎯 Top Wicket Takers');
+      var info = '<strong>Top 10 Wicket Takers</strong>\n\n';
+      DATA.bowlingStats.slice(0,10).forEach(function(b, i) {
+        info += (i+1) + '. <strong>' + b.name.replace(/ +\(c\)/, '') + '</strong> — ' + b.wickets + ' wkts (Eco ' + b.economy + ', BBI ' + b.bestFigures + ')\n';
+      });
+      addMessage('ai', info);
+      renderTree([{ icon: '📊', label: 'More leaderboards', action: 'leaderboards' }, { icon: '🏠', label: 'Main menu', action: 'root' }]);
+      return;
+    }
+
+    if (action === 'showSixesLeaderboard') {
+      addMessage('user', '💥 Most Sixes');
+      var sorted = DATA.battingStats.slice().sort(function(a,b){ return b.sixes - a.sixes; });
+      var info = '<strong>Top 10 Six Hitters</strong>\n\n';
+      sorted.slice(0,10).forEach(function(b, i) {
+        info += (i+1) + '. <strong>' + b.name.replace(/ +\(c\)/, '') + '</strong> — ' + b.sixes + ' sixes (' + b.runs + ' runs)\n';
+      });
+      addMessage('ai', info);
+      renderTree([{ icon: '📊', label: 'More leaderboards', action: 'leaderboards' }, { icon: '🏠', label: 'Main menu', action: 'root' }]);
+      return;
+    }
+
+    if (action === 'showPOMLeaderboard') {
+      addMessage('user', '🏅 Most POM Awards');
+      var info = '<strong>Player of the Match Awards</strong>\n\n';
+      DATA.playerOfMatchCounts.slice(0,10).forEach(function(p, i) {
+        info += (i+1) + '. <strong>' + p.name + '</strong> (' + p.team.split(' ')[0] + ') — ' + p.count + ' awards\n';
+      });
+      addMessage('ai', info);
+      renderTree([{ icon: '📊', label: 'More leaderboards', action: 'leaderboards' }, { icon: '🏠', label: 'Main menu', action: 'root' }]);
+      return;
+    }
+
+    if (action === 'root') {
+      showRootTree();
+      return;
+    }
+  }
+
   // Build compact system prompt — minimize tokens while keeping all key data
   var _cachedSystemPrompt = null;
   function buildSystemPrompt() {
@@ -1632,6 +1939,7 @@ function initDashboard() {
   function setApiKey(key) { localStorage.setItem('gpl_claude_api_key', key); }
 
   function renderSuggestions() {
+    if (treeMode) { showRootTree(); return; }
     if (chatHistory.length > 0) { suggestions.style.display = 'none'; return; }
     suggestions.style.display = 'flex';
     suggestions.innerHTML = suggestedQuestions.map(function(q) {
@@ -1740,10 +2048,12 @@ function initDashboard() {
     } catch (e) {
       hideTyping();
       addMessage('system', e.message);
-      chatHistory.pop(); // remove failed user message from history
+      chatHistory.pop();
     }
     isLoading = false;
     sendBtn.disabled = false;
+    // Show "back to menu" after AI response
+    renderTree([{ icon: '🏠', label: 'Main menu', action: 'root' }]);
     input.focus();
   }
 
@@ -1752,10 +2062,9 @@ function initDashboard() {
     isOpen = !isOpen;
     panel.classList.toggle('open', isOpen);
     if (isOpen) {
-      if (!getApiKey() && chatHistory.length === 0) { showKeyPrompt(); }
-      else if (chatHistory.length === 0) {
-        addMessage('system', 'Ask me anything about Greenage Premier League 2026!');
-        renderSuggestions();
+      if (messages.children.length === 0) {
+        addMessage('system', 'Welcome to GPL 2026! Explore stats or ask anything.');
+        showRootTree();
       }
       input.focus();
     }
